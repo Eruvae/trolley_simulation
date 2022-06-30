@@ -7,4 +7,7 @@ int main(int argc, char **argv)
   ros::NodeHandle nhp("~");
   ros::AsyncSpinner spinner(4);
   spinner.start();
+
+  TrolleySimulation sim;
+  sim.trolleyMoveThread();
 }
