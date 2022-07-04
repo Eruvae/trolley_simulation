@@ -9,5 +9,5 @@ int main(int argc, char **argv)
   spinner.start();
 
   TrolleySimulation sim;
-  sim.trolleyMoveThread();
+  sim.pubStatusThread();
 }

@@ -1,6 +1,8 @@
 #include <ros/ros.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
+#include <tf2_ros/static_transform_broadcaster.h>
+#include <tf2_ros/transform_broadcaster.h>
 #include <nav_msgs/Odometry.h>
 #include <std_msgs/String.h>
 #include <std_msgs/Bool.h>
@@ -139,12 +141,19 @@ private:
   ros::Publisher rail_front_pub;
   ros::Publisher rail_rear_pub;
 
+  tf2_ros::StaticTransformBroadcaster static_br;
+  tf2_ros::TransformBroadcaster odom_br;
+  tf2_ros::TransformBroadcaster pose_br;
+
   ros::Subscriber cmd_sub;
+
+  boost::thread trolley_move_thread;
 
 public:
   TrolleySimulation() :
     tfBuffer(ros::Duration(30)),
-    tfListener(tfBuffer)
+    tfListener(tfBuffer),
+    trolley_move_thread(&TrolleySimulation::trolleyMoveThread, this)
   {
     ros::NodeHandle nh;
     odom_pub = nh.advertise<nav_msgs::Odometry>("odom", 10);
@@ -155,6 +164,8 @@ public:
     cmd_sub = nh.subscribe("trolley_commands", 1, &TrolleySimulation::commandCb, this);
 
     status_pub.publish(state.getStatus());
+
+    broadcastOdomFrame();
   }
 /*
   if TrolleyCommands.MOVE_FORWARD in command.buttons:
@@ -361,5 +372,81 @@ public:
       // DEBUG
       ROS_INFO_STREAM("Current pose: " << state.position << "; Height: " << state.height);
     }
+  }
+
+  void pubStatusThread()
+  {
+    /*rate = rospy.Rate(10) # 10hz
+    # initial status and pose publishing
+    self.status_pub.publish(self.trolley.getStatus())
+    self.updateHeight()
+    self.broadcastOdometry()
+    if(self.tracker_enable):
+      self.broadcastTrackerPose()
+
+    while not rospy.is_shutdown():
+      self.updateRailSensor()
+      # Publish height transform and status when they change
+      if self.trolley.newHeight():
+        self.updateHeight()
+      if self.trolley.newStatus():
+        self.status_pub.publish(self.trolley.getStatus())
+      # pub rail sensor status
+      self.rail_front_pub.publish(self.trolley.getFrontSensor())
+      self.rail_rear_pub.publish(self.trolley.getRearSensor())
+      # Broadcast odometry
+      self.broadcastOdometry()
+      if(self.tracker_enable):
+        self.broadcastTrackerPose()
+
+      if self.launch_record:
+        self.launch_record = False
+        self.start_recording()
+
+      if not self.recording and self.rail_sensors['came_off']:
+        self.rail_sensors['came_off'] = False
+
+      if self.recording and self.auto_stop_record and self.rail_sensors['came_off']:
+        self.stop_recording()
+
+      rate.sleep()
+
+    self.stop_recording()*/
+    for (ros::Rate rate(10); ros::ok(); rate.sleep())
+    {
+      status_pub.publish(state.getStatus());
+      broadcastOdometry();
+    }
+  }
+
+  void broadcastOdomFrame()
+  {
+    geometry_msgs::TransformStamped t_odom;
+    t_odom.header.stamp = ros::Time::now();
+    t_odom.transform.rotation.w = 1;
+    t_odom.header.frame_id = "map";
+    t_odom.child_frame_id = "odom";
+    static_br.sendTransform(t_odom);
+  }
+
+
+  void broadcastOdometry()
+  {
+    ros::Time current_time = ros::Time::now();
+    geometry_msgs::TransformStamped t;
+    t.header.stamp = current_time;
+    t.header.frame_id = "odom";
+    t.child_frame_id = "base_link";
+    t.transform.translation.x = state.position / 1000.0;
+    t.transform.rotation.w = 1;
+    odom_br.sendTransform(t);
+
+    nav_msgs::Odometry odom_msg;
+    odom_msg.header.stamp = current_time;
+    odom_msg.header.frame_id = t.header.frame_id;
+    odom_msg.child_frame_id = t.child_frame_id;
+    odom_msg.pose.pose.position.x = t.transform.translation.x;
+    odom_msg.pose.pose.orientation.w = t.transform.rotation.w;
+    odom_pub.publish(odom_msg);
   }
 };
