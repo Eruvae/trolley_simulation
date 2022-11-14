@@ -165,7 +165,7 @@ public:
 
     status_pub.publish(state.getStatus());
 
-    broadcastOdomFrame();
+    //broadcastOdomFrame();
   }
 /*
   if TrolleyCommands.MOVE_FORWARD in command.buttons:
@@ -415,7 +415,7 @@ public:
     for (ros::Rate rate(10); ros::ok(); rate.sleep())
     {
       status_pub.publish(state.getStatus());
-      broadcastOdometry();
+      //broadcastOdometry();
     }
   }
 
