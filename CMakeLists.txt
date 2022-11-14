@@ -9,6 +9,9 @@ set (CATKIN_DEPENDENCIES
     sensor_msgs
     std_msgs
     tf2_ros
+    moveit_core
+    moveit_ros_planning
+    moveit_ros_planning_interface
 )
 
 ## Find catkin macros and libraries

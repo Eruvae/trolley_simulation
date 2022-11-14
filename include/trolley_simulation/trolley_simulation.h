@@ -8,6 +8,9 @@
 #include <std_msgs/Bool.h>
 #include <sensor_msgs/Joy.h>
 
+#include <moveit/move_group_interface/move_group_interface.h>
+#include <moveit/planning_scene_interface/planning_scene_interface.h>
+
 // Command mapping for Joy messages
 enum TrolleyCommand
 {
@@ -128,7 +131,7 @@ struct TrolleyState
 class TrolleySimulation
 {
 private:
-
+  bool is_initialized = false;
   const double TIME_INTERVAL = 0.1;
 
   TrolleyState state;
@@ -149,11 +152,16 @@ private:
 
   boost::thread trolley_move_thread;
 
+  const std::string PLANNING_GROUP = "linear"; // TODO: parameterize
+  moveit::planning_interface::MoveGroupInterface move_group_interface;
+  //moveit::planning_interface::PlanningSceneInterface planning_scene_interface;
+
 public:
   TrolleySimulation() :
     tfBuffer(ros::Duration(30)),
     tfListener(tfBuffer),
-    trolley_move_thread(&TrolleySimulation::trolleyMoveThread, this)
+    trolley_move_thread(&TrolleySimulation::trolleyMoveThread, this),
+    move_group_interface(PLANNING_GROUP)
   {
     ros::NodeHandle nh;
     odom_pub = nh.advertise<nav_msgs::Odometry>("odom", 10);
@@ -165,7 +173,12 @@ public:
 
     status_pub.publish(state.getStatus());
 
+    //ROS_INFO_NAMED("tutorial", "Available Planning Groups:");
+    //std::copy(move_group_interface.getJointModelGroupNames().begin(),
+    //          move_group_interface.getJointModelGroupNames().end(), std::ostream_iterator<std::string>(std::cout, ", "));
+
     //broadcastOdomFrame();
+    is_initialized = true;
   }
 /*
   if TrolleyCommands.MOVE_FORWARD in command.buttons:
@@ -329,6 +342,8 @@ public:
   {
     for (ros::Rate r(1.0/TIME_INTERVAL); ros::ok(); r.sleep())
     {
+      if (!is_initialized) continue;
+
       if (state.position_goal)
       {
         double dist = *state.position_goal- state.position;
@@ -370,6 +385,16 @@ public:
       }
 
       // DEBUG
+      move_group_interface.setJointValueTarget("platform_move_joint", 1.0);
+      move_group_interface.setJointValueTarget("platform_lift_joint", 0.5);
+      move_group_interface.asyncMove();
+
+      auto joint_values = move_group_interface.getCurrentJointValues();
+      for (int i=0; i<joint_values.size(); i++)
+      {
+        ROS_FATAL("joint-%d: %f", i, joint_values[i]);
+      }
+
       ROS_INFO_STREAM("Current pose: " << state.position << "; Height: " << state.height);
     }
   }
