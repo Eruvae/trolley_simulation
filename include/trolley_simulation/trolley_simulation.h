@@ -64,26 +64,10 @@ struct TrolleyState
 {
   double position = 0.0; // in mm
   double height = 0.0; // in mm
-
-  int horizontal_move_dir = 0;
-  int vertical_move_dir = 0;
-
-  std::optional<double> position_goal = std::nullopt;
-  std::optional<double> height_goal = std::nullopt;
+  double position_goal = 0.0;
+  double height_goal = 0.0;
 
   TrolleyStatus status = READY;
-
-  void changePos(int dir, std::optional<double> goal = std::nullopt)
-  {
-    position_goal = goal;
-    horizontal_move_dir = dir;
-  }
-
-  void changeHeight(int dir, std::optional<double> goal = std::nullopt)
-  {
-    height_goal = goal;
-    vertical_move_dir = dir;
-  }
 
   std_msgs::String getStatus()
   {
@@ -141,8 +125,8 @@ private:
   double height_min; // in mm
   double height_max; // in mm
   //double height_speed; // not implemented. const double HEIGHT_SPEED = 1000.0;
-  double moveit_goal_tolerance;
-  double moveit_goal_joint_tolerance;
+  double goal_tolerance;
+  double goal_joint_tolerance;
   bool publish_tf;
   bool publish_odom;
   bool print_position_height;
@@ -162,11 +146,11 @@ public:
     priv_nh.param<double>("update_time_interval", update_time_interval, 0.1);
     priv_nh.param<std::string>("planning_group", planning_group, "linear");
     priv_nh.param<double>("position_min", position_min, 0.0);     // in mm
-    priv_nh.param<double>("position_max", position_max, 4000.0); // in mm. this value is copied from the robot model.
+    priv_nh.param<double>("position_max", position_max, 4000.0);  // in mm. this value is copied from the robot model.
     priv_nh.param<double>("height_min", height_min, 0.0);         // in mm
     priv_nh.param<double>("height_max", height_max, 2200.0);      // in mm. this value is copied from the robot model.
-    priv_nh.param<double>("moveit_goal_tolerance", moveit_goal_tolerance, 0.05);      // in meters
-    priv_nh.param<double>("moveit_goal_joint_tolerance", moveit_goal_joint_tolerance, 0.05);      // in meters
+    priv_nh.param<double>("goal_tolerance", goal_tolerance, 0.05);              // in meters
+    priv_nh.param<double>("goal_joint_tolerance", goal_joint_tolerance, 0.05);  // in meters
     priv_nh.param<bool>("publish_tf", publish_tf, false);
     priv_nh.param<bool>("publish_odom", publish_odom, false);
     priv_nh.param<bool>("print_position_height", print_position_height, true);
@@ -182,8 +166,8 @@ public:
     cmd_sub = nh.subscribe("trolley_commands", 1, &TrolleySimulation::commandCb, this);
 
     move_group_interface.reset(new moveit::planning_interface::MoveGroupInterface(planning_group));
-    move_group_interface->setGoalTolerance(moveit_goal_tolerance);
-    move_group_interface->setGoalJointTolerance(moveit_goal_joint_tolerance);
+    move_group_interface->setGoalTolerance(goal_tolerance);
+    move_group_interface->setGoalJointTolerance(goal_joint_tolerance);
 
     broadcastOdomFrame();
     status_pub.publish(state.getStatus());
@@ -208,15 +192,14 @@ public:
       if (command->axes.size() == 0 ||  command->axes[0] == 0.f)
       {
         if (command->axes.size() == 0) ROS_ERROR("Axes is empty. Regarding the axis value as 0 which stops the trolley. This may create a problem with the real driver.");
-        state.changePos(0);
         move_group_interface->stop(); // TODO: need to stop? maybe?
       }
       else
       {
-        state.changePos(1);
         move_group_interface->setJointValueTarget(move_joint, position_max);
         move_group_interface->asyncMove();
         state.status = FORWARD;
+        state.position_goal = position_max;
       }
     }
     if (contains(command->buttons, MOVE_BACKWARD)) // 1
@@ -224,15 +207,14 @@ public:
       if (command->axes.size() == 0 ||  command->axes[0] == 0.f)
       {
         if (command->axes.size() == 0) ROS_ERROR("Axes is empty. Regarding the axis value as 0 which stops the trolley. This may create a problem with the real driver. ");
-        state.changePos(0);
         move_group_interface->stop(); // TODO: need to stop? maybe?
       }
       else
       {
-        state.changePos(-1);
         move_group_interface->setJointValueTarget(move_joint, position_min);
         move_group_interface->asyncMove();
         state.status = BACKWARD;
+        state.position_goal = position_min;
       }
     }
     if (contains(command->buttons, MOVE_UP)) // 2
@@ -240,15 +222,14 @@ public:
       if (command->axes.size() == 0 || command->axes[0] == 0.f)
       {
         if (command->axes.size() == 0) ROS_ERROR("Axes is empty. This may create a problem with the real driver!");
-        state.changeHeight(0);
         move_group_interface->stop(); // TODO: need to stop? maybe?
       }
       else
       {
-        state.changeHeight(1);
         move_group_interface->setJointValueTarget(lift_joint, height_max);
         move_group_interface->asyncMove();
         state.status = UPWARD;
+        state.height_goal = height_max;
       }
     }
     if (contains(command->buttons, MOVE_DOWN)) // 3
@@ -256,15 +237,14 @@ public:
       if (command->axes.size() == 0 || command->axes[0] == 0.f)
       {
         if (command->axes.size() == 0) ROS_ERROR("Axes is empty. This may create a problem with the real driver!");
-        state.changeHeight(0);
         move_group_interface->stop(); // TODO: need to stop? maybe?
       }
       else
       {
-        state.changeHeight(-1);
         move_group_interface->setJointValueTarget(lift_joint, height_min);
         move_group_interface->asyncMove();
         state.status = DOWNWARD;
+        state.height_goal = height_min;
       }
     }
     if (contains(command->buttons, OIL_CHOKE)) // 4
@@ -301,7 +281,6 @@ public:
       {
         double pos = (double)command->axes[0];
         if (pos < position_min || pos > position_max) ROS_ERROR("Given position value %lf is outside of the boundaries! Executing the command nevertheless. (min: %lf, max: %lf)", pos, position_min, position_max);
-        state.changePos(pos > state.position ? 1 : -1, pos);
         move_group_interface->setJointValueTarget(move_joint, pos / 1000.0);
         move_group_interface->asyncMove();
         state.status = MOVING_TO;
@@ -317,7 +296,7 @@ public:
       {
         double height = (double)command->axes[0];
         if (height < height_min || height > height_max) ROS_ERROR("Given height value %lf is outside of the boundaries! Executing the command nevertheless. (min: %lf, max: %lf)", height, height_min, height_max);
-        state.changeHeight(height > state.height ? 1 : -1, height);
+
         move_group_interface->setJointValueTarget(lift_joint, height / 1000.0);
         move_group_interface->asyncMove();
         state.status = LIFTING_TO;
@@ -326,7 +305,7 @@ public:
     if (contains(command->buttons, STOP_ALL)) // 12
     {
       move_group_interface->stop();
-      state.status = STOPPED
+      state.status = STOPPED;
     }
     if (contains(command->buttons, SET_WAKE_INTERVAL)) // 13
     {
@@ -362,6 +341,26 @@ public:
         move_group_interface->setRandomTarget();
         move_group_interface->move();
       }
+
+      // WELL... THIS IS NOT WORKING. WE HAVE TO LISTEN "/pos_joint_traj_controller_linear/follow_joint_trajectory/result" FOR THE MOVEIT ASYNC MOVE STATUS UPDATES
+      // http://docs.ros.org/en/fuerte/api/actionlib_msgs/html/msg/GoalStatus.html
+      /*
+      bool goal_reached = false;
+      // moveit doesnt allow checking async movement state. So, using this hack
+      if ( abs(state.position-state.position_goal) <= goal_joint_tolerance && (state.status == FORWARD || state.status == BACKWARD || state.status == MOVING_TO) )
+      {
+        // reached position goal
+        ROS_INFO("reached position goal");
+        goal_reached = true;
+      }
+
+      if ( abs(state.height-state.height_goal) <= goal_joint_tolerance && (state.status == UPWARD || state.status == DOWNWARD || state.status == LIFTING_TO) )
+      {
+        // reached height goal
+        ROS_INFO("reached height goal");
+        goal_reached = true;
+      }
+      */
 
     }
   }
