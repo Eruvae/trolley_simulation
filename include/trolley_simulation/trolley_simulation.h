@@ -7,6 +7,8 @@
 #include <std_msgs/String.h>
 #include <std_msgs/Bool.h>
 #include <sensor_msgs/Joy.h>
+#include <chrono>
+#include <thread>
 
 #include <moveit/move_group_interface/move_group_interface.h>
 #include <moveit/planning_scene_interface/planning_scene_interface.h>
@@ -60,14 +62,6 @@ static const char* RAIL_REAR = "on_rail_rear";
 
 struct TrolleyState
 {
-  const double POSITION_MIN = 0.0;
-  const double POSITION_MAX = 20000.0;
-  const double POSITION_SPEED = 1000.0;
-
-  const double HEIGHT_MIN = 0.0;
-  const double HEIGHT_MAX = 80000.0;
-  const double HEIGHT_SPEED = 1000.0;
-
   double position = 0.0; // in mm
   double height = 0.0; // in mm
 
@@ -89,22 +83,6 @@ struct TrolleyState
   {
     height_goal = goal;
     vertical_move_dir = dir;
-  }
-
-  void checkPosMinMax()
-  {
-    bool reached = false;
-    if ((reached = (position >= POSITION_MAX))) position = POSITION_MAX;
-    else if ((reached = (position <= POSITION_MIN))) position = POSITION_MIN;
-    if (reached) changePos(0);
-  }
-
-  void checkHeightMinMax()
-  {
-    bool reached = false;
-    if ((reached = (height >= HEIGHT_MAX))) height = HEIGHT_MAX;
-    else if ((reached = (height <= HEIGHT_MIN))) height = HEIGHT_MIN;
-    if (reached) changeHeight(0);
   }
 
   std_msgs::String getStatus()
@@ -132,7 +110,6 @@ class TrolleySimulation
 {
 private:
   bool is_initialized = false;
-  const double TIME_INTERVAL = 0.1;
 
   TrolleyState state;
 
@@ -151,106 +128,75 @@ private:
   ros::Subscriber cmd_sub;
 
   boost::thread trolley_move_thread;
+  boost::thread pub_status_thread;
 
-  const std::string PLANNING_GROUP = "linear"; // TODO: parameterize
-  moveit::planning_interface::MoveGroupInterface move_group_interface;
-  //moveit::planning_interface::PlanningSceneInterface planning_scene_interface;
+  moveit::planning_interface::MoveGroupInterfacePtr move_group_interface;
+
+  // ROS parameters
+  double update_time_interval; // TIME_INTERVAL
+  std::string planning_group;
+  double position_min; // in mm
+  double position_max; // in mm
+  //double position speed; // not implemented. const double POSITION_SPEED = 1000.0;
+  double height_min; // in mm
+  double height_max; // in mm
+  //double height_speed; // not implemented. const double HEIGHT_SPEED = 1000.0;
+  double moveit_goal_tolerance;
+  double moveit_goal_joint_tolerance;
+  bool publish_tf;
+  bool publish_odom;
+  bool print_position_height;
+  std::string move_joint;
+  std::string lift_joint;
+  bool demo_mode;
 
 public:
   TrolleySimulation() :
     tfBuffer(ros::Duration(30)),
     tfListener(tfBuffer),
     trolley_move_thread(&TrolleySimulation::trolleyMoveThread, this),
-    move_group_interface(PLANNING_GROUP)
+    pub_status_thread(&TrolleySimulation::pubStatusThread, this)
   {
-    ros::NodeHandle nh;
+    ros::NodeHandle nh, priv_nh("~");
+
+    priv_nh.param<double>("update_time_interval", update_time_interval, 0.1);
+    priv_nh.param<std::string>("planning_group", planning_group, "linear");
+    priv_nh.param<double>("position_min", position_min, 0.0);     // in mm
+    priv_nh.param<double>("position_max", position_max, 4000.0); // in mm. this value is copied from the robot model.
+    priv_nh.param<double>("height_min", height_min, 0.0);         // in mm
+    priv_nh.param<double>("height_max", height_max, 2200.0);      // in mm. this value is copied from the robot model.
+    priv_nh.param<double>("moveit_goal_tolerance", moveit_goal_tolerance, 0.05);      // in meters
+    priv_nh.param<double>("moveit_goal_joint_tolerance", moveit_goal_joint_tolerance, 0.05);      // in meters
+    priv_nh.param<bool>("publish_tf", publish_tf, false);
+    priv_nh.param<bool>("publish_odom", publish_odom, false);
+    priv_nh.param<bool>("print_position_height", print_position_height, true);
+    priv_nh.param<std::string>("move_joint", move_joint, "platform_move_joint");
+    priv_nh.param<std::string>("lift_joint", lift_joint, "platform_lift_joint");
+    priv_nh.param<bool>("demo_mode", demo_mode, false);
+
     odom_pub = nh.advertise<nav_msgs::Odometry>("odom", 10);
     status_pub = nh.advertise<std_msgs::String>("status", 10, true);
     rail_front_pub = nh.advertise<std_msgs::Bool>("on_rail_front", 10);
     rail_rear_pub = nh.advertise<std_msgs::Bool>("on_rail_rear", 10);
 
     cmd_sub = nh.subscribe("trolley_commands", 1, &TrolleySimulation::commandCb, this);
+
+    move_group_interface.reset(new moveit::planning_interface::MoveGroupInterface(planning_group));
+    move_group_interface->setGoalTolerance(moveit_goal_tolerance);
+    move_group_interface->setGoalJointTolerance(moveit_goal_joint_tolerance);
+
+    broadcastOdomFrame();
     status_pub.publish(state.getStatus());
-
-    //ROS_INFO_NAMED("tutorial", "Available Planning Groups:");
-    //std::copy(move_group_interface.getJointModelGroupNames().begin(),
-    //          move_group_interface.getJointModelGroupNames().end(), std::ostream_iterator<std::string>(std::cout, ", "));
-
-    //broadcastOdomFrame();
-
-    move_group_interface.setJointValueTarget("platform_move_joint", 2.0);
-    move_group_interface.setJointValueTarget("platform_lift_joint", 2.0);
-    move_group_interface.asyncMove();
-
     is_initialized = true;
   }
-/*
-  if TrolleyCommands.MOVE_FORWARD in command.buttons:
-    self.trolley.moveForward(False if command.axes[0] == 0.0 else True)
 
-  if TrolleyCommands.MOVE_BACKWARD in command.buttons:
-    self.trolley.moveBackward(False if command.axes[0] == 0.0 else True)
-
-  if TrolleyCommands.MOVE_UP in command.buttons:
-    self.trolley.moveUp(False if command.axes[0] == 0.0 else True)
-
-  if TrolleyCommands.MOVE_DOWN in command.buttons:
-    self.trolley.moveDown(False if command.axes[0] == 0.0 else True)
-
-  if TrolleyCommands.OIL_CHOKE in command.buttons:
-    self.trolley.oilChoke(False if command.axes[0] == 0.0 else True)
-
-  if TrolleyCommands.SET_BEEPER in command.buttons:
-    self.trolley.setBeeper(False if command.axes[0] == 0.0 else True)
-
-  if TrolleyCommands.SET_TIMEOUT in command.buttons:
-    self.trolley.setTimeout(int(command.axes[0]))
-
-  if TrolleyCommands.RESET_POSITION in command.buttons:
-    self.trolley.resetPosition()
-
-  if TrolleyCommands.RESET_HEIGHT in command.buttons:
-    self.trolley.resetHeight()
-
-  if TrolleyCommands.SET_VELOCITY in command.buttons:
-    self.trolley.setVelocity(int(command.axes[0]))
-
-  if TrolleyCommands.MOVE_TO in command.buttons:
-    self.trolley.moveTo(int(command.axes[0]))
-
-  if TrolleyCommands.LIFT_TO in command.buttons:
-    self.trolley.liftTo(int(command.axes[0]))
-
-  if TrolleyCommands.STOP_ALL in command.buttons:
-    self.trolley.stopAll()
-
-  if TrolleyCommands.SET_WAKE_INTERVAL in command.buttons:
-    self.trolley.setWakeInterval(int(command.axes[0]))
-
-  if TrolleyCommands.SET_CMD_SPACING in command.buttons:
-    self.trolley.setCmdSpacing(int(command.axes[0]))
-
-  if TrolleyCommands.REQUEST_UPDATE in command.buttons:
-    self.trolley.requestPositionUpdate()
-    sleep(0.1)
-    self.trolley.requestHeightUpdate()
-    sleep(0.1)
-    self.trolley.requestSensorsUpdate()
-    self.trolley.isReady()
-
-    self.status_pub.publish(self.trolley.getStatus())
-    print('update published')
-
-  if TrolleyCommands.TRY_RECONNECT in command.buttons:
-    self.trolley.tryReconnect()
-
-  if TrolleyCommands.CONFIG_INFO in command.buttons:
-    self.trolley.configInfo(False if command.axes[0] == 0.0 else True)
-  */
   void commandCb(const sensor_msgs::Joy::ConstPtr &command)
   {
-    move_group_interface.stop();
-    ROS_FATAL("STOPPP");
+    if (!is_initialized)
+    {
+      ROS_ERROR("Fake trolley node is not initialized. The command is not executed!");
+      return;
+    }
 
     auto contains = [](const auto &vec, const auto &el)
     {
@@ -259,206 +205,209 @@ public:
 
     if (contains(command->buttons, MOVE_FORWARD)) // 0
     {
-      if (command->axes[0] == 0.f)
+      if (command->axes.size() == 0 ||  command->axes[0] == 0.f)
+      {
+        if (command->axes.size() == 0) ROS_ERROR("Axes is empty. Regarding the axis value as 0 which stops the trolley. This may create a problem with the real driver.");
         state.changePos(0);
+        move_group_interface->stop(); // TODO: need to stop? maybe?
+      }
       else
+      {
         state.changePos(1);
+        move_group_interface->setJointValueTarget(move_joint, position_max);
+        move_group_interface->asyncMove();
+        state.status = FORWARD;
+      }
     }
     if (contains(command->buttons, MOVE_BACKWARD)) // 1
     {
-      if (command->axes[0] == 0.f)
+      if (command->axes.size() == 0 ||  command->axes[0] == 0.f)
+      {
+        if (command->axes.size() == 0) ROS_ERROR("Axes is empty. Regarding the axis value as 0 which stops the trolley. This may create a problem with the real driver. ");
         state.changePos(0);
+        move_group_interface->stop(); // TODO: need to stop? maybe?
+      }
       else
+      {
         state.changePos(-1);
+        move_group_interface->setJointValueTarget(move_joint, position_min);
+        move_group_interface->asyncMove();
+        state.status = BACKWARD;
+      }
     }
     if (contains(command->buttons, MOVE_UP)) // 2
     {
-      if (command->axes[0] == 0.f)
+      if (command->axes.size() == 0 || command->axes[0] == 0.f)
+      {
+        if (command->axes.size() == 0) ROS_ERROR("Axes is empty. This may create a problem with the real driver!");
         state.changeHeight(0);
+        move_group_interface->stop(); // TODO: need to stop? maybe?
+      }
       else
+      {
         state.changeHeight(1);
+        move_group_interface->setJointValueTarget(lift_joint, height_max);
+        move_group_interface->asyncMove();
+        state.status = UPWARD;
+      }
     }
     if (contains(command->buttons, MOVE_DOWN)) // 3
     {
-      if (command->axes[0] == 0.f)
+      if (command->axes.size() == 0 || command->axes[0] == 0.f)
+      {
+        if (command->axes.size() == 0) ROS_ERROR("Axes is empty. This may create a problem with the real driver!");
         state.changeHeight(0);
+        move_group_interface->stop(); // TODO: need to stop? maybe?
+      }
       else
+      {
         state.changeHeight(-1);
+        move_group_interface->setJointValueTarget(lift_joint, height_min);
+        move_group_interface->asyncMove();
+        state.status = DOWNWARD;
+      }
     }
     if (contains(command->buttons, OIL_CHOKE)) // 4
     {
-
+      ROS_WARN("Not implemented command: OIL_CHOKE");
     }
     if (contains(command->buttons, SET_BEEPER)) // 5
     {
-
+      ROS_WARN("Not implemented command: SET_BEEPER");
     }
     if (contains(command->buttons, SET_TIMEOUT)) // 6
     {
-
+      ROS_WARN("Not implemented command: SET_TIMEOUT");
     }
     if (contains(command->buttons, RESET_POSITION)) // 7
     {
-
+      ROS_WARN("Not implemented command: RESET_POSITION");
     }
     if (contains(command->buttons, RESET_HEIGHT)) // 8
     {
-
+      ROS_WARN("Not implemented command: RESET_HEIGHT");
     }
     if (contains(command->buttons, SET_VELOCITY)) // 9
     {
-
+      ROS_WARN("Not implemented command: SET_VELOCITY");
     }
     if (contains(command->buttons, MOVE_TO)) // 10
     {
-      double pos = (double)command->axes[0];
-      state.changePos(pos > state.position ? 1 : -1, pos);
+      if (command->axes.size() <= 0)
+      {
+        ROS_ERROR("MOVE_TO command is called without axis! Axis should include position value in mm.");
+      }
+      else
+      {
+        double pos = (double)command->axes[0];
+        if (pos < position_min || pos > position_max) ROS_ERROR("Given position value %lf is outside of the boundaries! Executing the command nevertheless. (min: %lf, max: %lf)", pos, position_min, position_max);
+        state.changePos(pos > state.position ? 1 : -1, pos);
+        move_group_interface->setJointValueTarget(move_joint, pos / 1000.0);
+        move_group_interface->asyncMove();
+        state.status = MOVING_TO;
+      }
     }
     if (contains(command->buttons, LIFT_TO)) // 11
     {
-      double height = (double)command->axes[0];
-      state.changeHeight(height > state.height ? 1 : -1, height);
+      if (command->axes.size() <= 0)
+      {
+        ROS_ERROR("LIFT_TO command is called without axis! Axis should include height value in mm.");
+      }
+      else
+      {
+        double height = (double)command->axes[0];
+        if (height < height_min || height > height_max) ROS_ERROR("Given height value %lf is outside of the boundaries! Executing the command nevertheless. (min: %lf, max: %lf)", height, height_min, height_max);
+        state.changeHeight(height > state.height ? 1 : -1, height);
+        move_group_interface->setJointValueTarget(lift_joint, height / 1000.0);
+        move_group_interface->asyncMove();
+        state.status = LIFTING_TO;
+      }
     }
     if (contains(command->buttons, STOP_ALL)) // 12
     {
-
+      move_group_interface->stop();
+      state.status = STOPPED
     }
     if (contains(command->buttons, SET_WAKE_INTERVAL)) // 13
     {
-
+      ROS_WARN("Not implemented command: SET_WAKE_INTERVAL");
     }
     if (contains(command->buttons, SET_CMD_SPACING)) // 14
     {
-
+      ROS_WARN("Not implemented command: SET_CMD_SPACING");
     }
     if (contains(command->buttons, REQUEST_UPDATE)) // 15
     {
-
+      ROS_WARN("Not implemented command: REQUEST_UPDATE");
     }
     if (contains(command->buttons, TRY_RECONNECT)) // 16
     {
-
+      ROS_WARN("Not implemented command: TRY_RECONNECT");
     }
     if (contains(command->buttons, CONFIG_INFO)) // 17
     {
-
+      ROS_WARN("Not implemented command: CONFIG_INFO");
     }
   }
 
   void trolleyMoveThread()
   {
-    for (ros::Rate r(1.0/TIME_INTERVAL); ros::ok(); r.sleep())
+    while (!is_initialized) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    for (ros::Rate rate(1.0/update_time_interval); ros::ok(); rate.sleep())
     {
-      if (!is_initialized) continue;
-
-      /*
-      if (state.position_goal)
+      // Assign random joint targets in the demo mode!
+      if (demo_mode)
       {
-        double dist = *state.position_goal- state.position;
-        if (std::abs(dist) < TIME_INTERVAL * state.POSITION_SPEED)
-        {
-          state.position = *state.position_goal;
-          state.changePos(0);
-        }
-        else
-        {
-          state.position += std::copysign(TIME_INTERVAL * state.POSITION_SPEED, dist);
-        }
-        state.checkPosMinMax();
-      }
-      else if (state.horizontal_move_dir != 0)
-      {
-        state.position += state.horizontal_move_dir * TIME_INTERVAL * state.POSITION_SPEED;
-        state.checkPosMinMax();
+        move_group_interface->setRandomTarget();
+        move_group_interface->move();
       }
 
-      if (state.height_goal)
-      {
-        double dist = *state.height_goal- state.height;
-        if (std::abs(dist) < TIME_INTERVAL * state.HEIGHT_SPEED)
-        {
-          state.height = *state.height_goal;
-          state.changeHeight(0);
-        }
-        else
-        {
-          state.height += std::copysign(TIME_INTERVAL * state.HEIGHT_SPEED, dist);
-        }
-        state.checkHeightMinMax();
-      }
-      else if (state.vertical_move_dir != 0)
-      {
-        state.height += state.vertical_move_dir * TIME_INTERVAL * state.HEIGHT_SPEED;
-        state.checkHeightMinMax();
-      }
-      */
-
-      auto joint_values = move_group_interface.getCurrentJointValues();
-      for (int i=0; i<joint_values.size(); i++)
-      {
-        ROS_FATAL("joint-%d: %f", i, joint_values[i]);
-      }
-
-      // DEBUG
-      ROS_INFO_STREAM("Current pose: " << state.position << "; Height: " << state.height);
     }
   }
 
   void pubStatusThread()
   {
-    /*rate = rospy.Rate(10) # 10hz
-    # initial status and pose publishing
-    self.status_pub.publish(self.trolley.getStatus())
-    self.updateHeight()
-    self.broadcastOdometry()
-    if(self.tracker_enable):
-      self.broadcastTrackerPose()
+    while (!is_initialized) std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    while not rospy.is_shutdown():
-      self.updateRailSensor()
-      # Publish height transform and status when they change
-      if self.trolley.newHeight():
-        self.updateHeight()
-      if self.trolley.newStatus():
-        self.status_pub.publish(self.trolley.getStatus())
-      # pub rail sensor status
-      self.rail_front_pub.publish(self.trolley.getFrontSensor())
-      self.rail_rear_pub.publish(self.trolley.getRearSensor())
-      # Broadcast odometry
-      self.broadcastOdometry()
-      if(self.tracker_enable):
-        self.broadcastTrackerPose()
-
-      if self.launch_record:
-        self.launch_record = False
-        self.start_recording()
-
-      if not self.recording and self.rail_sensors['came_off']:
-        self.rail_sensors['came_off'] = False
-
-      if self.recording and self.auto_stop_record and self.rail_sensors['came_off']:
-        self.stop_recording()
-
-      rate.sleep()
-
-    self.stop_recording()*/
-    for (ros::Rate rate(10); ros::ok(); rate.sleep())
+    for (ros::Rate rate(1.0/update_time_interval); ros::ok(); rate.sleep())
     {
+      auto joint_values = move_group_interface->getCurrentJointValues();
+      auto joint_names = move_group_interface->getJointNames();
+      for (int i=0; i<joint_values.size(); i++)
+      {
+        if (joint_names[i].compare(move_joint) == 0)
+        {
+          state.position = joint_values[i] * 1000.0;
+        }
+        else if  (joint_names[i].compare(lift_joint) == 0)
+        {
+          state.height = joint_values[i] * 1000.0;
+        }
+      }
+
+      if (print_position_height)
+      {
+        ROS_INFO_STREAM_THROTTLE(1.0, "Trolley Position: " << state.position << "mm Trolley Height: " << state.height << "mm");
+      }
+
       status_pub.publish(state.getStatus());
-      //broadcastOdometry();
+      broadcastOdometry();
     }
   }
 
   void broadcastOdomFrame()
   {
-    geometry_msgs::TransformStamped t_odom;
-    t_odom.header.stamp = ros::Time::now();
-    t_odom.transform.rotation.w = 1;
-    t_odom.header.frame_id = "map";
-    t_odom.child_frame_id = "odom";
-    static_br.sendTransform(t_odom);
+    if (publish_tf)
+    {
+      geometry_msgs::TransformStamped t_odom;
+      t_odom.header.stamp = ros::Time::now();
+      t_odom.transform.rotation.w = 1;
+      t_odom.header.frame_id = "map";
+      t_odom.child_frame_id = "odom";
+      static_br.sendTransform(t_odom);
+    }
   }
-
 
   void broadcastOdometry()
   {
@@ -469,14 +418,22 @@ public:
     t.child_frame_id = "base_link";
     t.transform.translation.x = state.position / 1000.0;
     t.transform.rotation.w = 1;
-    odom_br.sendTransform(t);
 
-    nav_msgs::Odometry odom_msg;
-    odom_msg.header.stamp = current_time;
-    odom_msg.header.frame_id = t.header.frame_id;
-    odom_msg.child_frame_id = t.child_frame_id;
-    odom_msg.pose.pose.position.x = t.transform.translation.x;
-    odom_msg.pose.pose.orientation.w = t.transform.rotation.w;
-    odom_pub.publish(odom_msg);
+    if (publish_tf)
+    {
+      odom_br.sendTransform(t);
+    }
+
+    if (publish_odom)
+    {
+      nav_msgs::Odometry odom_msg;
+      odom_msg.header.stamp = current_time;
+      odom_msg.header.frame_id = t.header.frame_id;
+      odom_msg.child_frame_id = t.child_frame_id;
+      odom_msg.pose.pose.position.x = t.transform.translation.x;
+      odom_msg.pose.pose.orientation.w = t.transform.rotation.w;
+      odom_pub.publish(odom_msg);
+    }
+
   }
 };
