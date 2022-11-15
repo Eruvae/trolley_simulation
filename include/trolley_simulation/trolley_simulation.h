@@ -170,7 +170,6 @@ public:
     rail_rear_pub = nh.advertise<std_msgs::Bool>("on_rail_rear", 10);
 
     cmd_sub = nh.subscribe("trolley_commands", 1, &TrolleySimulation::commandCb, this);
-
     status_pub.publish(state.getStatus());
 
     //ROS_INFO_NAMED("tutorial", "Available Planning Groups:");
@@ -178,6 +177,11 @@ public:
     //          move_group_interface.getJointModelGroupNames().end(), std::ostream_iterator<std::string>(std::cout, ", "));
 
     //broadcastOdomFrame();
+
+    move_group_interface.setJointValueTarget("platform_move_joint", 2.0);
+    move_group_interface.setJointValueTarget("platform_lift_joint", 2.0);
+    move_group_interface.asyncMove();
+
     is_initialized = true;
   }
 /*
@@ -245,6 +249,9 @@ public:
   */
   void commandCb(const sensor_msgs::Joy::ConstPtr &command)
   {
+    move_group_interface.stop();
+    ROS_FATAL("STOPPP");
+
     auto contains = [](const auto &vec, const auto &el)
     {
       return std::find(vec.begin(), vec.end(), el) != vec.end();
@@ -344,6 +351,7 @@ public:
     {
       if (!is_initialized) continue;
 
+      /*
       if (state.position_goal)
       {
         double dist = *state.position_goal- state.position;
@@ -383,11 +391,7 @@ public:
         state.height += state.vertical_move_dir * TIME_INTERVAL * state.HEIGHT_SPEED;
         state.checkHeightMinMax();
       }
-
-      // DEBUG
-      move_group_interface.setJointValueTarget("platform_move_joint", 1.0);
-      move_group_interface.setJointValueTarget("platform_lift_joint", 0.5);
-      move_group_interface.asyncMove();
+      */
 
       auto joint_values = move_group_interface.getCurrentJointValues();
       for (int i=0; i<joint_values.size(); i++)
@@ -395,6 +399,7 @@ public:
         ROS_FATAL("joint-%d: %f", i, joint_values[i]);
       }
 
+      // DEBUG
       ROS_INFO_STREAM("Current pose: " << state.position << "; Height: " << state.height);
     }
   }
