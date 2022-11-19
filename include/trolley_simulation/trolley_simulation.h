@@ -9,6 +9,7 @@
 #include <sensor_msgs/Joy.h>
 #include <chrono>
 #include <thread>
+#include <control_msgs/FollowJointTrajectoryActionResult.h>
 
 #include <moveit/move_group_interface/move_group_interface.h>
 #include <moveit/planning_scene_interface/planning_scene_interface.h>
@@ -67,7 +68,7 @@ struct TrolleyState
   double position_goal = 0.0;
   double height_goal = 0.0;
 
-  TrolleyStatus status = READY;
+  TrolleyStatus status = CONNECTED;
 
   std_msgs::String getStatus()
   {
@@ -110,6 +111,7 @@ private:
   tf2_ros::TransformBroadcaster pose_br;
 
   ros::Subscriber cmd_sub;
+  ros::Subscriber result_sub;
 
   boost::thread trolley_move_thread;
   boost::thread pub_status_thread;
@@ -153,7 +155,7 @@ public:
     priv_nh.param<double>("goal_joint_tolerance", goal_joint_tolerance, 0.05);  // in meters
     priv_nh.param<bool>("publish_tf", publish_tf, false);
     priv_nh.param<bool>("publish_odom", publish_odom, false);
-    priv_nh.param<bool>("print_position_height", print_position_height, true);
+    priv_nh.param<bool>("print_position_height", print_position_height, false);
     priv_nh.param<std::string>("move_joint", move_joint, "platform_move_joint");
     priv_nh.param<std::string>("lift_joint", lift_joint, "platform_lift_joint");
     priv_nh.param<bool>("demo_mode", demo_mode, false);
@@ -163,6 +165,7 @@ public:
     rail_front_pub = nh.advertise<std_msgs::Bool>("on_rail_front", 10);
     rail_rear_pub = nh.advertise<std_msgs::Bool>("on_rail_rear", 10);
 
+    result_sub = nh.subscribe("/pos_joint_traj_controller_linear/follow_joint_trajectory/result", 1, &TrolleySimulation::resultCb, this);
     cmd_sub = nh.subscribe("trolley_commands", 1, &TrolleySimulation::commandCb, this);
 
     move_group_interface.reset(new moveit::planning_interface::MoveGroupInterface(planning_group));
@@ -172,6 +175,53 @@ public:
     broadcastOdomFrame();
     status_pub.publish(state.getStatus());
     is_initialized = true;
+  }
+
+  void resultCb(const control_msgs::FollowJointTrajectoryActionResult::ConstPtr &result)
+  {
+    
+    int status = result->status.status;
+    switch(status)
+    {
+      case 0:
+        ROS_FATAL("PENDING");
+        break;
+      case 1:
+        ROS_FATAL("ACTIVE");
+        break;
+      case 2:
+        ROS_FATAL("PREEMPTED");
+        return;
+        break;
+      case 3:
+        ROS_FATAL("SUCCEEDED");
+        break;
+      case 4:
+        ROS_FATAL("ABORTED");
+        break;
+      case 5:
+        ROS_FATAL("REJECTED");
+        break;
+      case 6:
+        ROS_FATAL("PREEMPTING");
+        return;
+        break;
+      case 7:
+        ROS_FATAL("RECALLING");
+        break;
+      case 8:
+        ROS_FATAL("RECALLED");
+        break;
+      case 9:
+        ROS_FATAL("LOST");
+        break;
+    }
+    
+
+    state.status = GOAL_REACHED;
+
+    move_group_interface->setJointValueTarget(move_joint, state.position / 1000.0);
+    move_group_interface->setJointValueTarget(lift_joint, state.height / 1000.0);
   }
 
   void commandCb(const sensor_msgs::Joy::ConstPtr &command)
@@ -341,27 +391,6 @@ public:
         move_group_interface->setRandomTarget();
         move_group_interface->move();
       }
-
-      // WELL... THIS IS NOT WORKING. WE HAVE TO LISTEN "/pos_joint_traj_controller_linear/follow_joint_trajectory/result" FOR THE MOVEIT ASYNC MOVE STATUS UPDATES
-      // http://docs.ros.org/en/fuerte/api/actionlib_msgs/html/msg/GoalStatus.html
-      /*
-      bool goal_reached = false;
-      // moveit doesnt allow checking async movement state. So, using this hack
-      if ( abs(state.position-state.position_goal) <= goal_joint_tolerance && (state.status == FORWARD || state.status == BACKWARD || state.status == MOVING_TO) )
-      {
-        // reached position goal
-        ROS_INFO("reached position goal");
-        goal_reached = true;
-      }
-
-      if ( abs(state.height-state.height_goal) <= goal_joint_tolerance && (state.status == UPWARD || state.status == DOWNWARD || state.status == LIFTING_TO) )
-      {
-        // reached height goal
-        ROS_INFO("reached height goal");
-        goal_reached = true;
-      }
-      */
-
     }
   }
 
@@ -385,12 +414,43 @@ public:
         }
       }
 
+      status_pub.publish(state.getStatus());
+      // GOAL_REACHED -> STOPPED -> READY
+      switch (state.status)
+      {
+        case NOT_CONNECTED:
+          break;
+        case STOPPED:
+          state.status = READY;
+          break;
+        case READY:
+          break;
+        case FORWARD:
+          break;
+        case BACKWARD:
+          break;
+        case UPWARD:
+          break;
+        case DOWNWARD:
+          break;
+        case MOVING_TO:
+          break;
+        case LIFTING_TO:
+          break;
+        case GOAL_REACHED:
+          state.status = STOPPED;
+          break;
+        case CONNECTED:
+          state.status = READY;
+          break;
+      }
+
       if (print_position_height)
       {
         ROS_INFO_STREAM_THROTTLE(1.0, "Trolley Position: " << state.position << "mm Trolley Height: " << state.height << "mm");
       }
 
-      status_pub.publish(state.getStatus());
+      
       broadcastOdometry();
     }
   }
