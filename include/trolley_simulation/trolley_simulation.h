@@ -117,9 +117,11 @@ private:
   std::string planning_group;
   double position_min; // in mm
   double position_max; // in mm
+  double position_offset; // in mm
   //double position speed; // not implemented. const double POSITION_SPEED = 1000.0;
   double height_min; // in mm
   double height_max; // in mm
+  double height_offset; // in mm
   //double height_speed; // not implemented. const double HEIGHT_SPEED = 1000.0;
   double goal_tolerance;
   double goal_joint_tolerance;
@@ -138,9 +140,11 @@ public:
 
     priv_nh.param<std::string>("planning_group", planning_group, "linear");
     priv_nh.param<double>("position_min", position_min, 0.0);     // in mm
-    priv_nh.param<double>("position_max", position_max, 4000.0);  // in mm. this value is copied from the robot model.
+    priv_nh.param<double>("position_max", position_max, 3000.0);  // in mm. this value is copied from the robot model.
+    priv_nh.param<double>("position_offset", position_offset, 0.0);  // in mm. this value is copied from the robot model.
     priv_nh.param<double>("height_min", height_min, 0.0);         // in mm
     priv_nh.param<double>("height_max", height_max, 2200.0);      // in mm. this value is copied from the robot model.
+    priv_nh.param<double>("height_offset", height_offset, 469.0);      // in mm. this value is copied from the robot model.
     priv_nh.param<double>("goal_tolerance", goal_tolerance, 0.05);              // in meters
     priv_nh.param<double>("goal_joint_tolerance", goal_joint_tolerance, 0.05);  // in meters
     priv_nh.param<bool>("publish_tf", publish_tf, false);
@@ -207,8 +211,8 @@ public:
 
     state.status = GOAL_REACHED;
 
-    move_group_interface->setJointValueTarget(move_joint, state.position / 1000.0);
-    move_group_interface->setJointValueTarget(lift_joint, state.height / 1000.0);
+    move_group_interface->setJointValueTarget(move_joint, state.position / 1000.0 - position_offset);
+    move_group_interface->setJointValueTarget(lift_joint, state.height / 1000.0 - height_offset);
   }
 
   void commandCb(const sensor_msgs::Joy::ConstPtr &command)
@@ -312,6 +316,7 @@ public:
       {
         double pos = (double)command->axes[0];
         if (pos < position_min || pos > position_max) ROS_ERROR("Given position value %lf is outside of the boundaries! Executing the command nevertheless. (min: %lf, max: %lf)", pos, position_min, position_max);
+        pos = std::clamp(pos, position_min, position_max);
         move_group_interface->setJointValueTarget(move_joint, pos / 1000.0);
         move_group_interface->asyncMove();
         state.status = MOVING_TO;
@@ -325,9 +330,9 @@ public:
       }
       else
       {
-        double height = (double)command->axes[0];
+        double height = (double)command->axes[0] - height_offset;
         if (height < height_min || height > height_max) ROS_ERROR("Given height value %lf is outside of the boundaries! Executing the command nevertheless. (min: %lf, max: %lf)", height, height_min, height_max);
-
+        height = std::clamp(height, height_min, height_max);
         move_group_interface->setJointValueTarget(lift_joint, height / 1000.0);
         move_group_interface->asyncMove();
         state.status = LIFTING_TO;
@@ -374,11 +379,11 @@ public:
     {
       if (joint_names[i].compare(move_joint) == 0)
       {
-        state.position = joint_values[i] * 1000.0;
+        state.position = joint_values[i] * 1000.0 + position_offset;
       }
       else if  (joint_names[i].compare(lift_joint) == 0)
       {
-        state.height = joint_values[i] * 1000.0;
+        state.height = joint_values[i] * 1000.0 + height_offset;
       }
     }
 

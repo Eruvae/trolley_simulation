@@ -109,7 +109,7 @@ find_package(catkin REQUIRED COMPONENTS ${CATKIN_DEPENDENCIES})
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
    INCLUDE_DIRS include
-#   LIBRARIES ${PROJECT_NAME}
+   LIBRARIES ${PROJECT_NAME}
    CATKIN_DEPENDS ${CATKIN_DEPENDENCIES}
 #   DEPENDS
 )
@@ -141,6 +141,7 @@ include_directories(
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
 add_executable(trolley_node src/trolley_simulation.cpp)
+add_library(trolley_simulation src/trolley_remote.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -152,12 +153,14 @@ add_executable(trolley_node src/trolley_simulation.cpp)
 ## same as for the library above
 # add_dependencies(${PROJECT_NAME}_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 add_dependencies(trolley_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+add_dependencies(trolley_simulation ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Specify libraries to link a library or executable target against
 # target_link_libraries(${PROJECT_NAME}_node
 #   ${catkin_LIBRARIES}
 # )
 target_link_libraries(trolley_node ${catkin_LIBRARIES})
+target_link_libraries(trolley_simulation ${catkin_LIBRARIES})
 
 #############
 ## Install ##
