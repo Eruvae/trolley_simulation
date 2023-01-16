@@ -211,12 +211,14 @@ public:
 
     state.status = GOAL_REACHED;
 
-    move_group_interface->setJointValueTarget(move_joint, state.position / 1000.0 - position_offset);
-    move_group_interface->setJointValueTarget(lift_joint, state.height / 1000.0 - height_offset);
+    //move_group_interface->setJointValueTarget(move_joint, state.position / 1000.0 - position_offset);
+    //move_group_interface->setJointValueTarget(lift_joint, state.height / 1000.0 - height_offset);
   }
 
   void commandCb(const sensor_msgs::Joy::ConstPtr &command)
   {
+    move_group_interface->setStartStateToCurrentState();
+    move_group_interface->setJointValueTarget(move_group_interface->getCurrentJointValues());
     auto contains = [](const auto &vec, const auto &el)
     {
       return std::find(vec.begin(), vec.end(), el) != vec.end();
@@ -232,6 +234,7 @@ public:
       else
       {
         move_group_interface->setJointValueTarget(move_joint, position_max);
+        //move_group_interface->setJointValueTarget(lift_joint, state.height / 1000.0 - height_offset);
         move_group_interface->asyncMove();
         state.status = FORWARD;
         state.position_goal = position_max;
@@ -247,6 +250,7 @@ public:
       else
       {
         move_group_interface->setJointValueTarget(move_joint, position_min);
+        //move_group_interface->setJointValueTarget(lift_joint, state.height / 1000.0 - height_offset);
         move_group_interface->asyncMove();
         state.status = BACKWARD;
         state.position_goal = position_min;
@@ -262,6 +266,7 @@ public:
       else
       {
         move_group_interface->setJointValueTarget(lift_joint, height_max);
+        //move_group_interface->setJointValueTarget(move_joint, state.position / 1000.0 - position_offset);
         move_group_interface->asyncMove();
         state.status = UPWARD;
         state.height_goal = height_max;
@@ -277,6 +282,7 @@ public:
       else
       {
         move_group_interface->setJointValueTarget(lift_joint, height_min);
+        //move_group_interface->setJointValueTarget(move_joint, state.position / 1000.0 - position_offset);
         move_group_interface->asyncMove();
         state.status = DOWNWARD;
         state.height_goal = height_min;
@@ -318,6 +324,7 @@ public:
         if (pos < position_min || pos > position_max) ROS_ERROR("Given position value %lf is outside of the boundaries! Executing the command nevertheless. (min: %lf, max: %lf)", pos, position_min, position_max);
         pos = std::clamp(pos, position_min, position_max);
         move_group_interface->setJointValueTarget(move_joint, pos / 1000.0);
+        //move_group_interface->setJointValueTarget(lift_joint, state.height / 1000.0 - height_offset);
         move_group_interface->asyncMove();
         state.status = MOVING_TO;
       }
@@ -334,6 +341,7 @@ public:
         if (height < height_min || height > height_max) ROS_ERROR("Given height value %lf is outside of the boundaries! Executing the command nevertheless. (min: %lf, max: %lf)", height, height_min, height_max);
         height = std::clamp(height, height_min, height_max);
         move_group_interface->setJointValueTarget(lift_joint, height / 1000.0);
+        //move_group_interface->setJointValueTarget(move_joint, state.position / 1000.0 - position_offset);
         move_group_interface->asyncMove();
         state.status = LIFTING_TO;
       }
