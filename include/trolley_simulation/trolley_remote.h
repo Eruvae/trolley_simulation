@@ -84,6 +84,12 @@ public:
   void tryReconnect();
   void changeRow(int row_number);
 
+  void waitForReady(ros::Duration timeout = ros::Duration(30))
+  {
+    ros::Time start_time = ros::Time::now();
+    for (ros::Rate waitTrolley(10); ros::ok() && !isReady() && (ros::Time::now() - start_time) < timeout; waitTrolley.sleep());
+  }
+
 private:
   ros::NodeHandle nh;
   ros::NodeHandle nhp;
