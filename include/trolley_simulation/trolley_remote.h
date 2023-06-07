@@ -106,8 +106,8 @@ private:
   float row_length;
   float row_separation;
 
-  void updatePositionTransform();
-  void updateHeightTransform();
+  bool updatePositionTransform();
+  bool updateHeightTransform();
 
   void statusCallback(const std_msgs::StringConstPtr &status);
 };

@@ -186,32 +186,48 @@ void TrolleyRemote::changeRow(int row_number)
 
 const double POS_OFFSET = 2000;
 
-void TrolleyRemote::updatePositionTransform()
+bool TrolleyRemote::updatePositionTransform()
 {
+  if (!tfBuffer._frameExists("base_link") || !tfBuffer._frameExists("platform_start_link"))
+  {
+    position = std::numeric_limits<double>::quiet_NaN();
+    return false;
+  }
   geometry_msgs::TransformStamped positionTransform;
   try
   {
-    positionTransform = tfBuffer.lookupTransform("base_link", "platform_start_link", ros::Time(0), ros::Duration(1));
+    positionTransform = tfBuffer.lookupTransform("base_link", "platform_start_link", ros::Time(0), ros::Duration(0));
   }
   catch (const tf2::TransformException &e)
   {
     ROS_ERROR_STREAM("Couldn't find position transform: " << e.what());
+    position = std::numeric_limits<double>::quiet_NaN();
+    return false;
   }
   position = -(positionTransform.transform.translation.x * 1000 - POS_OFFSET);
+  return true;
 }
 
-void TrolleyRemote::updateHeightTransform()
+bool TrolleyRemote::updateHeightTransform()
 {
+  if (!tfBuffer._frameExists("base_link") || !tfBuffer._frameExists("platform_base"))
+  {
+    height = std::numeric_limits<double>::quiet_NaN();
+    return false;
+  }
   geometry_msgs::TransformStamped heightTransform;
   try
   {
-    heightTransform = tfBuffer.lookupTransform("base_link", "platform_base", ros::Time(0), ros::Duration(1));
+    heightTransform = tfBuffer.lookupTransform("base_link", "platform_base", ros::Time(0), ros::Duration(0));
   }
   catch (const tf2::TransformException &e)
   {
     ROS_ERROR_STREAM("Couldn't find height transform: " << e.what());
+    height = std::numeric_limits<double>::quiet_NaN();
+    return false;
   }
   height = heightTransform.transform.translation.z * 1000;
+  return true;
 }
 
 void TrolleyRemote::statusCallback(const std_msgs::StringConstPtr &status)
